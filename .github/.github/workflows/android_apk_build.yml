@@ -1,0 +1,77 @@
+name: Build Android APKs
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-apks:
+    name: Build Debug and Release APKs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          validate-wrappers: false
+
+      - name: Make Gradle Wrapper Executable
+        run: chmod +x ./gradlew || true
+
+      - name: Decode Release Keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            printf '%s' "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 --decode > release.keystore || true
+            if [ -s release.keystore ]; then
+              echo "Successfully decoded release keystore."
+              echo "KEYSTORE_PATH=${{ github.workspace }}/release.keystore" >> $GITHUB_ENV
+            else
+              echo "Decoded keystore file is empty or invalid. Removing file."
+              rm -f release.keystore
+            fi
+          else
+            echo "KEYSTORE_BASE64 secret is not provided."
+          fi
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Build Release APK
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: app-debug-apk
+          path: "**/build/outputs/apk/debug/*.apk"
+          retention-days: 7
+
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: app-release-apk
+          path: "**/build/outputs/apk/release/*.apk"
+          retention-days: 7
+
